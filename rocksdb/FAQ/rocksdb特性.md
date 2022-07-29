@@ -6,6 +6,8 @@
   - [BlockCache](#blockcache)
     - [LRU Cache](#lru-cache)
     - [Clock Cache](#clock-cache)
+  - [MemTable](#memtable)
+  - [WAL](#wal)
 - [系统特性](#系统特性)
   - [MANIFEST](#manifest)
 
@@ -148,7 +150,41 @@ ClockCache实现了CLOCK算法。CLOCK CACHE的每个shard都有一个cache entr
   shared_ptr<rocksdb::Cache> cache =
       rocksdb::NewClockCache(capacity, num_shard_bits, strict_capacity_limit);
 ```
+## MemTable
+Memtable的重要配置如下：
+- `AdvancedColumnFamilyOptions::memtable_factory`:memtable工厂对象，用户可以改变memtable的底层实现并提供个性化的实现配置
+- `ColumnFamilyOptions::write_buffer_size`:单个内存表的大小限制
+- `DBOptions::db_write_buffer_size`:所有列族的内存表的总大小
+- `DBOptions::write_buffer_manager`:用户自定义的内存管理
+- `AdvancedColumnFamilyOptions::max_write_buffer_number`:内存表的最大个数
 
+而在以下三种情况，MemTable会被Flush：
+1. MemTable大小超过write_buffer_size
+2. 全部列族的大小超过了db_write_buffer_size
+3. 全部的WAL文件超过max_total_wal_size,这种情况下，内存中数据最老的内存表会被选择执行flush操作，然后内存表对应的WAL file会被回收
+
+## WAL
+对RocksDB的每一次update都会写入两个位置：1） 内存表（内存数据结构，后续会flush到SST file） 2）磁盘中的write ahead log（WAL）。在故障发生时，WAL可以用来恢复内存表中的数据。默认情况下，RocksDB通过在每次用户写时调用fflush WAL文件来保证一致性。
+
+其配置如下：
+
+- `DBOptions::wal_dir`: RocksDB保存WAL file的目录，可以将目录与数据目录配置在不同的路径下。
+- `DBOptions::WAL_ttl_seconds`: 影响归档WAL被删除的快慢。
+- `DBOptions::WAL_size_limit_MB`：影响归档WAL被删除的快慢。
+- `DBOptions::max_total_wal_size`: 一旦，WALs超过了这个大小，RocksDB会强制将所有列族的数据flush到SST file，之后就可以删除最老的WALs。
+- `DBOptions::manual_wal_flush`: 这个参数决定了WAL flush是否在每次写之后自动执行，或者是纯手动执行
+- `DBOptions::wal_filter`: 在恢复数据时可以过滤掉WAL中某些记录
+
+
+```cpp
+  rocksdb::Options opt;
+  opt.wal_dir = "./test/wal";
+  opt.WAL_ttl_seconds = 60;
+  opt.WAL_size_limit_MB = 60;
+  opt.max_total_wal_size = 100;
+  opt.manual_wal_flush = true;
+  opt.wal_filter = new rocksdb::WalFilter();
+```
 # 系统特性
 
 ## MANIFEST
@@ -157,3 +193,15 @@ ClockCache实现了CLOCK算法。CLOCK CACHE的每个shard都有一个cache entr
 MANIFEST是rocksdb状态变更的transction log记录。整个机制包含`MANIIFEST-Sequence`滚动日志文件以及最新的`CURRENT`文件指针 文件。
 
 当系统启动或者重启的时候，CURRENT指针文件指向的MANIFEST日志文件记录了rocksdb的一致性状态。当这个日志文件超过了阈值的时候，新的日志文件就会被创建，这个新文件是当前DB的快照，CURRENT也会同时更新。
+
+> MANIFEST日志文件本身是一串version edit记录。rocksdb在特定时间的特定状态会关联一个version。针对version的任何改动都被视为一个version edit。其基本格式格式如下：
+> 
+>+-------------+------ ......... ----------+
+> 
+>| Record ID   | Variable size record data |
+>
+>+-------------+------ .......... ---------+
+>
+> <-- Var32 --->|<-- varies by type       -->
+
+> 详细wiki：<https://github.com/facebook/rocksdb/wiki/MANIFEST>

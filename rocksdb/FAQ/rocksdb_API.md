@@ -82,7 +82,6 @@ int main() {
 
   status = rocksdb::DB::Open(loaded_db_opt, "./test",
                                              loaded_cf_descs, &handler, &db);
-  
 ```
 
 # Write 数据库
