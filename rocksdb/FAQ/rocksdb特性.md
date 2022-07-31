@@ -10,6 +10,9 @@
   - [WAL](#wal)
 - [系统特性](#系统特性)
   - [MANIFEST](#manifest)
+  - [全内存数据库](#全内存数据库)
+  - [index/fliter](#indexfliter)
+  - [Version](#version)
 
 # 写特性
 ## pipeline写入
@@ -169,7 +172,7 @@ Memtable的重要配置如下：
 其配置如下：
 
 - `DBOptions::wal_dir`: RocksDB保存WAL file的目录，可以将目录与数据目录配置在不同的路径下。
-- `DBOptions::WAL_ttl_seconds`: 影响归档WAL被删除的快慢。
+- `DBOptions::WAL_ttl_seconds`: 影响归档WAL被删除的快慢，指归档文件多久会被删除。
 - `DBOptions::WAL_size_limit_MB`：影响归档WAL被删除的快慢。
 - `DBOptions::max_total_wal_size`: 一旦，WALs超过了这个大小，RocksDB会强制将所有列族的数据flush到SST file，之后就可以删除最老的WALs。
 - `DBOptions::manual_wal_flush`: 这个参数决定了WAL flush是否在每次写之后自动执行，或者是纯手动执行
@@ -205,3 +208,50 @@ MANIFEST是rocksdb状态变更的transction log记录。整个机制包含`MANII
 > <-- Var32 --->|<-- varies by type       -->
 
 > 详细wiki：<https://github.com/facebook/rocksdb/wiki/MANIFEST>
+
+## 全内存数据库
+* 将DB目录设置为mount 到tmpfs或者ramfs的位置
+* 设置Options::wal_log为持久化存储上的目录
+* 设置Options::WAL_ttl_seconds为T second
+* 每隔T/2 second，backup RocksDB ，产生snapshot文件，使用的配置需要设置:BackupableDBOptions::backup_log_files = false
+* 当丢失数据时，使用配置 RestoreOptions::keep_log_file = true来从backup中恢复数据。
+
+## index/fliter
+>随着DB/mem使用越来越多，filter/index block的内存空间变得不可忽视。虽然cache_index_and_filter_blocks 配置只允许filter/index block数据的一部分cache在block cache中，但是还是会因为数据量的庞大影响RocksDB的性能。
+
+如果要分片的话，SST file的index/filter会被分片为多个小 block，并会配备一个索引。当需要读取index/filter时，只有top-level index会load到内存。然后，通过top-level index找出具体需要查询的那个分片，然后加载那个分片数据到block cache。top-level index占用的内存空间很小，可以存储在heap 也可以存储在block cache中，这取决于cache_index_and_filter_blocks配置。
+
+有好也必有坏，优劣如下：
+* 优势：
+  * 更高的cache 命中率:分片后，避免了超大的index/filter blocks 占用稀缺的cache空间，以更小的block形式加载需要的分片数据到block cache，这提高的内存空间的有效使用。
+  * 节省IO: 当index/filter分片数据 cache miss后，只有一个分片需要从disk load到内存，与load SSTfile的全部index/filter相比，这会大大减轻disk的负载。
+  * No compromise on index/filters：如果没有采取分片策略的话，要想减缓index/filter内存空间占用的问题可以采取以下方法：设置更大的block或者减少bloom bits来使index/filter变得更小。前者会导致刚才所述的cache 浪费问题，后者会影响bloom filter功能的正确性。
+
+* 劣势：
+  * top-level index会占用额外空间： index/filter大小的0.1~1%
+  * 更高的disk IO：如果top-level index不在cache的话，会增加一次额外的IO。为了避免这种问题，可以将index 以更高的优先级存储在heap或者 cache中。（todo）
+  * 损失了空间局部性: 如果是这样的场景，频繁且随机地读取相同SST文件的数据，这样就会在每次读取时都会load 不同的分片数据到内存，和一次性读取所有的index/filter相比，显然会更加低效。在RocksDB的benchmark中很少出现这种情况，但是这确实会发生在LSM tree的L0/L1数据访问中。因此，这两层的SST file 的index/filter可以不分片。(to do)
+
+配置如下：
+* index_type = IndexType::kTwoLevelIndexSearch
+  * 这个配置是启用index分片
+* NewBloomFilterPolicy(BITS, false)
+  * 使用full filters
+partition_filters = true
+  * 这个配置是启用filter分片
+* metadata_block_size = 4096
+index 
+  * 分片的大小设置
+* cache_index_and_filter_blocks = false
+  * 分片数据存储在cache中。控制top-level索引的存储位置，但是这种情况，在benchmark中实验数据不多。
+* cache_index_and_filter_blocks = true and pin_top_level_index_and_filter = true
+  * 将所有的index/filter数据和top-level index都存储在block cache。
+* cache_index_and_filter_blocks_with_high_priority = true
+* pin_l0_filter_and_index_blocks_in_cache = true
+  1. 建议设置，因为这个配置会应用到index/filter 分片
+  2. 只在compation style 是level-based时使用
+  3. 需要注意：当把block 数据cache到block cache后，可能会导致超过内存设置的容量（如果strict_capacity_limit 没有设置）。
+* block cache size: 如果之前都是将filter/index 存储在heap，现在设置filter/index 数据cache到block cache的话，不要忘了增加block cache size，大小与从heap中减少的量大概一致。
+
+## Version
+> 详细wiki：<https://www.jianshu.com/p/b95db752178f>

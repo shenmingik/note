@@ -26,6 +26,9 @@
   - [生成备份](#生成备份)
   - [加载备份文件](#加载备份文件)
 - [检查点](#检查点)
+- [rocksdb Tool](#rocksdb-tool)
+  - [数据访问和管理工具 —— lab](#数据访问和管理工具--lab)
+  - [SST访问工具 —— SST_dump](#sst访问工具--sst_dump)
 ```cpp
 ```
 # Open&Close 数据库
@@ -467,4 +470,61 @@ Status Create(DB* db, Checkpoint** checkpoint_ptr);
 //创建检查点
 
 Status CreateCheckpoint(const std::string& checkpoint_dir);
+```
+
+# rocksdb Tool
+
+## 数据访问和管理工具 —— lab
+```bash
+# ldb一般在rocksdb的build目录中的tools目录下
+# 基本格式 ./ldb --db=[DB_PATH] [COMMAND] xxx
+```
+
+```bash
+# 读取
+./ldb --db=/home/ik/workspace/lab/cpp/note/rocksdb/bin/test get 1
+```
+
+```bash
+# 写入
+./ldb --db=/home/ik/workspace/lab/cpp/note/rocksdb/bin/test put 15 123456789
+
+# 批量写入
+./ldb --db=/home/ik/workspace/lab/cpp/note/rocksdb/bin/test batchput 16 1 17 1 18 1
+```
+
+```bash
+# scan 
+./ldb --db=/home/ik/workspace/lab/cpp/note/rocksdb/bin/test scan 1 10
+```
+
+```bash
+# compact
+./ldb --db=/home/ik/workspace/lab/cpp/note/rocksdb/bin/test compact --compression_type=bzip2 --block_size=65536 --try_load_options=true --column_family=new_cf
+```
+
+```bash
+# 修复DB，此时需要保证MANIFEST文件不存在
+ldb repair --db=test
+```
+
+## SST访问工具 —— SST_dump
+```bash
+# 解析sst文件为txt格式
+sst_dump --file=test/000093.sst --command=raw
+```
+
+```bash
+# 打印这个sst文件的前五个key
+sst_dump --file=test/000093.sst --command=scan --read_num=5
+```
+
+```bash
+# 验证sst文件的合法性
+sst_dump --file=test/000127.sst --command=check --verify_checksum
+```
+
+```bash
+# 读取文件的元信息
+sst_dump --file=test/000127.sst --show_properties
 ```
