@@ -35,31 +35,29 @@ git stash list
 git stash drop
 ```
 
-## stage
-
-### 显示待stage的文件
+## 显示待stage的文件
 ```bash
 # 该命令将显示所有需要提交的文件
 git status
 ```
 
-### 撤销stage
+## 撤销
 ```bash
 # 该命令将从stage中撤出指定的文件，但可以保留文件的内容
 git reset [file]
 
 # 该命令可以撤销指定提交之后的所有提交，并在本地保留变更
-# git reset HEAD就是撤销add
+# git reset HEAD就是撤销commit和add
 git reset [commit_ptr]
-
-# 该命令将丢弃所有的历史记录，并回滚到指定的提交
-git reset –hard [commit_ptr]
 
 # 撤销commit但是保留add
 git reset --soft HEAD^
+
+# 该命令将丢弃所有的历史记录，并回滚到指定的提交
+git reset -–hard [commit_ptr]
 ```
 
-### 版本差异
+## 版本差异
 
 ```bash
 # 该命令可以显示尚未添加到stage的文件的变更
