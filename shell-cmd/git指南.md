@@ -53,7 +53,7 @@ git reset [file]
 git reset [commit_ptr]
 
 # 该命令将丢弃所有的历史记录，并回滚到指定的提交
-git reset –hard [commit]
+git reset –hard [commit_ptr]
 
 # 撤销commit但是保留add
 git reset --soft HEAD^
